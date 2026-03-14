@@ -1,85 +1,74 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const express = require('express');
+const axios = require('axios');
+const FormData = require('form-data');
 const app = express();
+app.use(express.json({ limit: '50mb' }));
 
-const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
-});
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK;
 
-// CẤU HÌNH ID KÊNH
-const MONITOR_CHANNEL_ID = "1482250836108115968"; 
-const BAN_CHANNEL_ID = "1480935000130978014";    
-const TOKEN = process.env.BOT_TOKEN;
+app.post('/report', async (req, res) => {
+    try {
+        const { pc_name, user, processes, screenshot, status } = req.body;
 
-client.once('ready', () => {
-    console.log(`🚀 Thẩm phán tối cao ${client.user.tag} đã online!`);
-});
+        if (status === "offline") {
+            await axios.post(DISCORD_WEBHOOK_URL, { content: `🔴 **${user}** đã ngắt kết nối.` });
+            return res.status(200).send("OK");
+        }
 
-client.on('messageCreate', async (message) => {
-    if (message.channelId !== MONITOR_CHANNEL_ID || message.embeds.length === 0) return;
+        // 1. DANH SÁCH HỆ THỐNG (Tuyệt đối an toàn)
+        const systemApps = ['svchost', 'conhost', 'dllhost', 'runtimebroker', 'wmiprvse', 'taskhostw', 'explorer', 'dwm', 'csrss', 'wininit', 'winlogon', 'lsass', 'spoolsv', 'smss', 'system', 'unsecapp', 'audiodg', 'fontdrvhost', 'registry', 'memory compression'];
+        
+        // 2. DANH SÁCH ỨNG DỤNG PHỔ BIẾN (An toàn)
+        const commonApps = ['chrome', 'msedge', 'discord', 'zalo', 'steam', 'roblox', 'asus', 'rtkauduservice64', 'squid', 'evkey', 'unikey', 'notepad', 'foxit', 'office', 'gamingservices', 'widgets', 'powershell', 'cmd'];
 
-    const reportEmbed = message.embeds[0];
-    const isDanger = reportEmbed.color === 15548997; // Màu đỏ của Bot 1
-    
-    // Trích xuất thông tin từ Bot 1
-    const userField = reportEmbed.fields.find(f => f.name.includes("User"));
-    const pcField = reportEmbed.fields.find(f => f.name.includes("PC"));
-    const strangeField = reportEmbed.fields.find(f => f.name.includes("lạ"));
-    
-    const username = userField ? userField.value : "Unknown";
-    const pcName = pcField ? pcField.value : "Unknown";
-    const strangeApps = strangeField ? strangeField.value : "N/A";
-
-    const banChannel = client.channels.cache.get(BAN_CHANNEL_ID);
-
-    if (isDanger) {
-        // --- GIAO DIỆN LỆNH BAN (CỰC ĐẸP) ---
-        const banEmbed = new EmbedBuilder()
-            .setAuthor({ name: 'HỆ THỐNG PHÁN QUYẾT ANTICHEAT', iconURL: 'https://cdn-icons-png.flaticon.com/512/763/763789.png' })
-            .setTitle('🔨 PHÁT HIỆN VI PHẠM NGHIÊM TRỌNG')
-            .setColor('#ff0000') // Màu đỏ rực
-            .setThumbnail('https://cdn-icons-png.flaticon.com/512/1022/1022313.png') // Icon búa ban
-            .addFields(
-                { name: '👤 Đối tượng', value: username, inline: true },
-                { name: '💻 Thiết bị', value: pcName, inline: true },
-                { name: '🚫 Tiến trình cấm', value: strangeApps },
-                { name: '📊 Mức độ đe dọa', value: '🔴 Rất cao (Automatic Flag)' }
-            )
-            .setImage(reportEmbed.image ? reportEmbed.image.url : null) // Lấy lại ảnh screenshot từ Bot 1
-            .setFooter({ text: `ID Phiên: ${message.id}` })
-            .setTimestamp();
-
-        // Thêm nút bấm tương tác
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setLabel('Xem bằng chứng gốc')
-                .setURL(message.url)
-                .setStyle(ButtonStyle.Link),
-            new ButtonBuilder()
-                .setCustomId('confirm_ban')
-                .setLabel('Xác nhận Ban')
-                .setStyle(ButtonStyle.Danger)
+        // 3. TIẾN TRÌNH THỰC SỰ LẠ (Không nằm trong 2 danh sách trên)
+        let unknownApps = processes.filter(name => 
+            !systemApps.some(s => name.toLowerCase().includes(s)) && 
+            !commonApps.some(c => name.toLowerCase().includes(c))
         );
 
-        if (banChannel) {
-            await banChannel.send({ 
-                content: `🚨 **CẢNH BÁO KHẨN CẤP: PHÁT HIỆN HACK TRÊN MÁY ${pcName}**`, 
-                embeds: [banEmbed], 
-                components: [row] 
-            });
-        }
-        await message.react('🔥'); // Phản ứng ở kênh báo cáo
-    } else {
-        // --- GIAO DIỆN AN TOÀN (GỌN GÀNG) ---
-        const safeEmbed = new EmbedBuilder()
-            .setDescription(`🛡️ **Thẩm định:** Người dùng **${username}** vượt qua bài kiểm tra. Trạng thái: **Sạch**.`)
-            .setColor('#2ecc71'); // Màu xanh lá mượt mắt
+        // 4. TỪ KHÓA HACK (Báo động đỏ ngay lập tức)
+        const cheatKeys = ['cheat', 'hack', 'injector', 'exploit', 'aimbot', 'matcha', 'vape', 'comfort', 'app'];
+        let hacksFound = processes.filter(name => cheatKeys.some(k => name.toLowerCase().includes(k)));
 
-        await message.reply({ embeds: [safeEmbed] });
-        await message.react('✅');
-    }
+        // --- LOGIC PHÁN QUYẾT ---
+        let color = 3066993; // Mặc định: Xanh (An toàn)
+        let title = "✅ HỆ THỐNG AN TOÀN";
+        let statusText = "Người dùng trong sạch.";
+
+        if (hacksFound.length > 0) {
+            color = 15548997; // Đỏ (Hack)
+            title = "🚨 CẢNH BÁO: PHÁT HIỆN HACK!";
+            statusText = `Tìm thấy phần mềm gian lận: ${hacksFound.join(", ")}`;
+        } else if (unknownApps.length > 0) {
+            color = 16776960; // Vàng (Nghi vấn - Có app lạ nhưng chưa chắc là hack)
+            title = "⚠️ CHÚ Ý: CÓ TIẾN TRÌNH LẠ";
+            statusText = "Phát hiện ứng dụng chưa xác định, cần Admin soi ảnh màn hình.";
+        }
+
+        const embed = {
+            title: title,
+            color: color,
+            fields: [
+                { name: "👤 User", value: `\`${user}\``, inline: true },
+                { name: "💻 PC", value: `\`${pc_name}\``, inline: true },
+                { name: "📝 Kết luận", value: `**${statusText}**` },
+                { 
+                    name: "🔍 Chi tiết app lạ", 
+                    value: unknownApps.length > 0 ? `\`\`\`diff\n- ${unknownApps.join("\n- ")}\`\`\`` : "\`Không có (Máy sạch)\`" 
+                }
+            ],
+            image: { url: 'attachment://screen.jpg' },
+            timestamp: new Date()
+        };
+
+        const form = new FormData();
+        form.append('payload_json', JSON.stringify({ embeds: [embed] }));
+        if (screenshot) form.append('file', Buffer.from(screenshot, 'base64'), { filename: 'screen.jpg' });
+
+        await axios.post(DISCORD_WEBHOOK_URL, form, { headers: form.getHeaders(), timeout: 30000 });
+        res.status(200).send("OK");
+    } catch (e) { res.status(200).send("OK"); }
 });
 
-app.get('/', (req, res) => res.send('Judge Bot Pro is Active!'));
 app.listen(process.env.PORT || 3000);
-client.login(TOKEN);
