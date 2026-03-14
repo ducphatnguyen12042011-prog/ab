@@ -1,74 +1,67 @@
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const express = require('express');
-const axios = require('axios');
-const FormData = require('form-data');
 const app = express();
-app.use(express.json({ limit: '50mb' }));
 
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK;
-
-app.post('/report', async (req, res) => {
-    try {
-        const { pc_name, user, processes, screenshot, status } = req.body;
-
-        if (status === "offline") {
-            await axios.post(DISCORD_WEBHOOK_URL, { content: `🔴 **${user}** đã ngắt kết nối.` });
-            return res.status(200).send("OK");
-        }
-
-        // 1. DANH SÁCH HỆ THỐNG (Tuyệt đối an toàn)
-        const systemApps = ['svchost', 'conhost', 'dllhost', 'runtimebroker', 'wmiprvse', 'taskhostw', 'explorer', 'dwm', 'csrss', 'wininit', 'winlogon', 'lsass', 'spoolsv', 'smss', 'system', 'unsecapp', 'audiodg', 'fontdrvhost', 'registry', 'memory compression'];
-        
-        // 2. DANH SÁCH ỨNG DỤNG PHỔ BIẾN (An toàn)
-        const commonApps = ['chrome', 'msedge', 'discord', 'zalo', 'steam', 'roblox', 'asus', 'rtkauduservice64', 'squid', 'evkey', 'unikey', 'notepad', 'foxit', 'office', 'gamingservices', 'widgets', 'powershell', 'cmd'];
-
-        // 3. TIẾN TRÌNH THỰC SỰ LẠ (Không nằm trong 2 danh sách trên)
-        let unknownApps = processes.filter(name => 
-            !systemApps.some(s => name.toLowerCase().includes(s)) && 
-            !commonApps.some(c => name.toLowerCase().includes(c))
-        );
-
-        // 4. TỪ KHÓA HACK (Báo động đỏ ngay lập tức)
-        const cheatKeys = ['cheat', 'hack', 'injector', 'exploit', 'aimbot', 'matcha', 'vape', 'comfort', 'app'];
-        let hacksFound = processes.filter(name => cheatKeys.some(k => name.toLowerCase().includes(k)));
-
-        // --- LOGIC PHÁN QUYẾT ---
-        let color = 3066993; // Mặc định: Xanh (An toàn)
-        let title = "✅ HỆ THỐNG AN TOÀN";
-        let statusText = "Người dùng trong sạch.";
-
-        if (hacksFound.length > 0) {
-            color = 15548997; // Đỏ (Hack)
-            title = "🚨 CẢNH BÁO: PHÁT HIỆN HACK!";
-            statusText = `Tìm thấy phần mềm gian lận: ${hacksFound.join(", ")}`;
-        } else if (unknownApps.length > 0) {
-            color = 16776960; // Vàng (Nghi vấn - Có app lạ nhưng chưa chắc là hack)
-            title = "⚠️ CHÚ Ý: CÓ TIẾN TRÌNH LẠ";
-            statusText = "Phát hiện ứng dụng chưa xác định, cần Admin soi ảnh màn hình.";
-        }
-
-        const embed = {
-            title: title,
-            color: color,
-            fields: [
-                { name: "👤 User", value: `\`${user}\``, inline: true },
-                { name: "💻 PC", value: `\`${pc_name}\``, inline: true },
-                { name: "📝 Kết luận", value: `**${statusText}**` },
-                { 
-                    name: "🔍 Chi tiết app lạ", 
-                    value: unknownApps.length > 0 ? `\`\`\`diff\n- ${unknownApps.join("\n- ")}\`\`\`` : "\`Không có (Máy sạch)\`" 
-                }
-            ],
-            image: { url: 'attachment://screen.jpg' },
-            timestamp: new Date()
-        };
-
-        const form = new FormData();
-        form.append('payload_json', JSON.stringify({ embeds: [embed] }));
-        if (screenshot) form.append('file', Buffer.from(screenshot, 'base64'), { filename: 'screen.jpg' });
-
-        await axios.post(DISCORD_WEBHOOK_URL, form, { headers: form.getHeaders(), timeout: 30000 });
-        res.status(200).send("OK");
-    } catch (e) { res.status(200).send("OK"); }
+const client = new Client({
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
+// CẤU HÌNH ID
+const MONITOR_CHANNEL_ID = "1482250836108115968"; 
+const BAN_CHANNEL_ID = "1480935000130978014";    
+const TOKEN = process.env.BOT_TOKEN;
+
+client.on('messageCreate', async (message) => {
+    // 1. Chỉ check tin nhắn từ Bot 1 trong kênh giám sát
+    if (message.channelId !== MONITOR_CHANNEL_ID || message.author.bot === false) return;
+    if (message.embeds.length === 0) return;
+
+    const embed = message.embeds[0];
+    const strangeField = embed.fields.find(f => f.name.includes("lạ") || f.name.includes("nhiệm"));
+    if (!strangeField) return;
+
+    // Lấy danh sách tiến trình từ tin nhắn của Bot 1
+    const processText = strangeField.value.toLowerCase();
+    
+    // --- BỘ LỌC TỰ ĐỘNG CỦA BOT 2 ---
+    const safeKeywords = ['rtkauduservice64', 'smss', 'squid', 'system', 'unsecapp', 'vssvc', 'wudfhost', 'wlanext'];
+    const hackKeywords = ['matcha', 'comfort', 'vape', 'executor', 'injector', 'cheat', 'hack', 'app'];
+
+    // Tách các tiến trình thành mảng để kiểm tra từng cái
+    const lines = processText.split('\n').map(l => l.replace(/[-\s`]/g, ""));
+
+    let realHacks = [];
+    let reallyStrange = [];
+    let safes = [];
+
+    lines.forEach(p => {
+        if (!p) return;
+        if (safeKeywords.some(k => p.includes(k))) {
+            safes.push(p);
+        } else if (hackKeywords.some(k => p.includes(k))) {
+            realHacks.push(p);
+        } else {
+            reallyStrange.push(p);
+        }
+    });
+
+    // --- BOT 2 ĐƯA RA KẾT LUẬN ---
+    const banChannel = client.channels.cache.get(BAN_CHANNEL_ID);
+
+    if (realHacks.length > 0) {
+        // NẾU CÓ HACK THẬT SỰ -> BAN
+        if (banChannel) {
+            await banChannel.send(`🔨 **PHÁN QUYẾT:** Đã tìm thấy hack **[${realHacks.join(", ")}]**. Thực hiện BAN người dùng!`);
+        }
+    } else if (reallyStrange.length > 0) {
+        // NẾU CÓ CÁI LẠ MÀ KHÔNG BIẾT LÀ GÌ -> CẢNH BÁO ADMIN
+        await message.reply(`⚠️ **Tự động check:** Có app lạ [${reallyStrange.join(", ")}], nhưng chưa đủ bằng chứng để BAN. Admin soi ảnh nhé!`);
+    } else if (safes.length > 0) {
+        // NẾU TẤT CẢ ĐỀU NẰM TRONG SAFE LIST -> BÁO AN TOÀN
+        await message.reply(`🛡️ **Tự động check:** Tất cả tiến trình [${safes.join(", ")}] đều thuộc **Safe List**. Máy sạch!`);
+    }
+});
+
+app.get('/', (req, res) => res.send('Judge Bot is analyzing...'));
 app.listen(process.env.PORT || 3000);
+client.login(TOKEN);
