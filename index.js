@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const express = require('express');
 const app = express();
 
@@ -11,7 +11,7 @@ const BAN_CHANNEL_ID = "1480935000130978014";
 const TOKEN = process.env.BOT_TOKEN;
 
 client.on('messageCreate', async (message) => {
-    // 1. Chỉ đọc tin nhắn từ Bot gửi báo cáo
+    // 1. Chỉ đọc báo cáo từ Bot 1
     if (message.channelId !== MONITOR_CHANNEL_ID || !message.author.bot) return;
     if (message.embeds.length === 0) return;
 
@@ -19,80 +19,79 @@ client.on('messageCreate', async (message) => {
     const strangeField = reportEmbed.fields.find(f => f.name.toLowerCase().includes("lạ"));
     if (!strangeField) return;
 
-    // 2. Lấy dữ liệu thô và làm sạch
     const processText = strangeField.value.toLowerCase();
     const lines = processText.split('\n').map(l => l.replace(/[-\s`]/g, "")).filter(l => l.length > 0);
 
-    // 3. BỘ NÃO TỰ PHÂN LOẠI (Mở rộng Safe List từ ảnh bạn gửi)
-    const safeKeywords = [
-        'rtkauduservice64', 'smss', 'squid', 'system', 'unsecapp', 'vssvc', 'wudfhost', 'wlanext',
-        'aksc', 'amdfendrsr', 'appactions', 'crossdevice', 'dtsapo4service', 'kidsafe', 'midisrv',
-        'mpdefendercoreservice', 'ms-teams', 'msmpeng', 'nissrv', 'p2penhance', 'phoneexperiencehost',
-        'startmenuexperiencehost', 'textinputhost', 'useroobebroker'
-    ];
-    const hackKeywords = ['matcha', 'comfort', 'vape', 'executor', 'injector', 'cheat', 'hack', 'app'];
+    // --- CƠ SỞ DỮ LIỆU ĐIỀU TRA (Dựa trên 9 tiêu chí của bạn) ---
+    const SAFE_LIST = ['rtkauduservice64', 'smss', 'squid', 'system', 'unsecapp', 'vssvc', 'wudfhost', 'wlanext', 'aksc', 'amdfendrsr', 'appactions', 'crossdevice', 'dtsapo4service', 'kidsafe', 'midisrv', 'mpdefendercoreservice', 'ms-teams', 'msmpeng', 'nissrv', 'p2penhance', 'phoneexperiencehost', 'startmenuexperiencehost', 'textinputhost', 'useroobebroker'];
+    
+    const HACK_TOOLS = ['cheatengine', 'ce.exe', 'injector', 'dllinject', 'manualmap', 'processhacker', 'loader', 'aimbot', 'wallhack', 'radarhack', 'esp.exe', 'triggerbot', 'trainer', 'gamehack', 'modmenu', 'inject', 'hook', 'attach', 'vape', 'matcha', 'comfort'];
+    
+    const SYSTEM_SPOOF = ['svchost', 'runtimebroker', 'explorer', 'winlogon', 'lsass', 'conhost'];
 
-    let foundHacks = [];
-    let foundSafes = [];
-    let foundUnknowns = [];
+    let report = { ban: [], warn: [], clean: [] };
 
     lines.forEach(p => {
-        if (safeKeywords.some(k => p.includes(k))) foundSafes.push(p);
-        else if (hackKeywords.some(k => p.includes(k))) foundHacks.push(p);
-        else foundUnknowns.push(p);
+        // Tiêu chí 2, 4, 7: Phát hiện Tool Hack, Injector, DLL Tool
+        if (HACK_TOOLS.some(k => p.includes(k))) {
+            report.ban.push({ name: p, reason: "Phát hiện Tool Hack/Injector (Tiêu chí 2, 4, 7)" });
+        } 
+        // Tiêu chí 3, 6, 9: Phát hiện giả mạo hệ thống hoặc chạy sai thư mục
+        else if (SYSTEM_SPOOF.some(k => p.includes(k))) {
+            report.ban.push({ name: p, reason: "Giả mạo file Windows - Chạy sai thư mục (Tiêu chí 3, 9)" });
+        }
+        // Kiểm tra danh sách an toàn
+        else if (SAFE_LIST.some(k => p.includes(k))) {
+            report.clean.push(p);
+        }
+        // Tiêu chí 1, 8: App lạ không rõ nguồn gốc, Startup nghi vấn
+        else {
+            report.warn.push({ name: p, reason: "Tiến trình không xác định - Publisher Unknown (Tiêu chí 1, 8)" });
+        }
     });
 
-    // 4. XỬ LÝ KẾT QUẢ
     const banChannel = client.channels.cache.get(BAN_CHANNEL_ID);
 
-    if (foundHacks.length > 0) {
-        // --- TRƯỜNG HỢP: BAN THẲNG TAY ---
+    // --- HÀNH ĐỘNG TỰ ĐỘNG ---
+    if (report.ban.length > 0) {
+        // KẾT LUẬN: HACK RÕ RÀNG -> BAN
         const banEmbed = new EmbedBuilder()
-            .setTitle("🔨 LỆNH PHÁN QUYẾT TỰ ĐỘNG")
+            .setTitle("🔨 PHÁN QUYẾT CUỐI CÙNG: CẤM VĨNH VIỄN")
             .setColor("#FF0000")
-            .setThumbnail("https://i.imgur.com/v098Xv0.png") // Icon búa đỏ
+            .setThumbnail("https://i.imgur.com/v098Xv0.png")
             .addFields(
                 { name: "👤 Đối tượng", value: reportEmbed.fields[0].value, inline: true },
-                { name: "🚨 Bằng chứng Hack", value: `\`\`\`diff\n- ${foundHacks.join("\n- ")}\`\`\`` },
-                { name: "🛡️ App hệ thống đi kèm", value: `\`${foundSafes.length} apps (Đã lọc)\``, inline: true }
+                { name: "💻 Thiết bị", value: reportEmbed.fields[1] ? reportEmbed.fields[1].value : "N/A", inline: true },
+                { name: "🚨 Bằng chứng vi phạm", value: `\`\`\`diff\n${report.ban.map(b => `- ${b.name} : ${b.reason}`).join("\n")}\n\`\`\`` },
+                { name: "📂 Phân tích thư mục", value: "Phát hiện tiến trình chạy từ AppData/Temp hoặc Giả danh System32." }
             )
             .setImage(reportEmbed.image ? reportEmbed.image.url : null)
-            .setTimestamp();
+            .setFooter({ text: "Hệ thống Anticheat AI - Công lý thực thi tự động" });
 
-        if (banChannel) {
-            await banChannel.send({ content: "🚨 **PHÁT HIỆN GIAN LẬN!**", embeds: [banEmbed] });
-        }
-        await message.react('❌');
-        await message.reply("💀 **Kết luận:** Đã tìm thấy mã độc. Lệnh BAN đã được gửi.");
+        if (banChannel) await banChannel.send({ content: "🚨 **HỆ THỐNG ĐÃ THỰC THI LỆNH BAN**", embeds: [banEmbed] });
+        await message.reply("💀 **Xác nhận:** Đã tìm thấy bằng chứng vi phạm dựa trên 9 tiêu chí. Lệnh Ban đã được xuất.");
+        await message.react('🔨');
 
-    } else if (foundUnknowns.length > 0) {
-        // --- TRƯỜNG HỢP: CÓ CÁI LẠ NHƯNG CHƯA ĐỦ BẰNG CHỨNG ---
+    } else if (report.warn.length > 0) {
+        // KẾT LUẬN: CÓ DẤU HIỆU NGHI VẤN -> BÁO ADMIN
         const warnEmbed = new EmbedBuilder()
-            .setTitle("⚠️ PHÂN TÍCH NGHI VẤN")
-            .setColor("#F1C40F")
-            .setDescription(`Phát hiện **${foundUnknowns.length}** tiến trình lạ không nằm trong danh sách an toàn.`)
+            .setTitle("🔍 BÁO CÁO PHÂN TÍCH CHUYÊN SÂU")
+            .setColor("#E67E22")
             .addFields(
-                { name: "🔍 App lạ", value: `\`\`\`yaml\n${foundUnknowns.join("\n")}\`\`\`` },
-                { name: "💡 Lời khuyên", value: "Admin nên check ảnh màn hình để xác nhận." }
+                { name: "⚠️ Tiến trình nghi vấn", value: `\`\`\`yaml\n${report.warn.map(w => `- ${w.name} (${w.reason})`).join("\n")}\n\`\`\`` },
+                { name: "📝 Chỉ dẫn Admin", value: "Check cột **Command line** & **Publisher**. Nếu Publisher là 'Unknown' thì khả năng cao là Hack." }
             );
 
         await message.reply({ embeds: [warnEmbed] });
-        await message.react('❓');
+        await message.react('🧐');
 
-    } else if (foundSafes.length > 0) {
-        // --- TRƯỜNG HỢP: AN TOÀN TUYỆT ĐỐI ---
-        const successEmbed = new EmbedBuilder()
-            .setAuthor({ name: "Judge Bot AI", iconURL: "https://i.imgur.com/Z9foc9P.png" })
-            .setTitle("✅ XÁC NHẬN AN TOÀN")
-            .setColor("#2ECC71")
-            .setDescription(`Tất cả **${foundSafes.length}** tiến trình báo về đều khớp với **Safe List**.`)
-            .addFields({ name: "🛡️ Trạng thái", value: "Máy sạch. Không phát hiện gian lận." });
-
-        await message.reply({ embeds: [successEmbed] });
+    } else {
+        // KẾT LUẬN: SẠCH
+        await message.reply(`🛡️ **Thẩm định:** Máy sạch. Đã lọc bỏ ${report.clean.length} tiến trình hệ thống (smss, system, squid...). Không có dấu hiệu vi phạm.`);
         await message.react('✅');
     }
 });
 
-app.get('/', (req, res) => res.send('Anticheat AI is Online!'));
+app.get('/', (req, res) => res.send('Anticheat AI Master is Ready.'));
 app.listen(process.env.PORT || 3000);
 client.login(TOKEN);
